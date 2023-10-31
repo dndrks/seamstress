@@ -6,16 +6,9 @@ const c = @cImport({
     @cInclude("SDL2/SDL_image.h");
 });
 
-var allocator: std.mem.Allocator = undefined;
 pub var SDL_USER_EVENT: u32 = undefined;
 var lock: std.Thread.Mutex = .{};
 const logger = std.log.scoped(.screen);
-
-const ScreenSize = struct {
-    w: i32,
-    h: i32,
-    z: i32,
-};
 
 const Bitmask = struct {
     r: u32,
@@ -86,6 +79,8 @@ var font: *c.TTF_Font = undefined;
 pub var quit = false;
 
 pub fn define_geometry(texture: ?*const Texture, vertices: []const Vertex, indices: ?[]const usize) void {
+    var sfba = std.heap.stackFallback(8 * 1024, std.heap.raw_c_allocator);
+    const allocator = sfba.get();
     var verts = allocator.alloc(c.SDL_Vertex, vertices.len) catch @panic("OOM!");
     defer allocator.free(verts);
     for (vertices, verts) |v, *w| {
@@ -190,6 +185,8 @@ pub fn quad(ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32, dx: f32, dy: f
 }
 
 pub fn new_texture(width: u16, height: u16) !*Texture {
+    var sfba = std.heap.stackFallback(8 * 1024, std.heap.raw_c_allocator);
+    const allocator = sfba.get();
     const n: usize = @as(usize, width * windows[current].zoom) * @as(usize, height * windows[current].zoom) * 4;
     var pixels = allocator.alloc(u8, n) catch @panic("OOM!");
     defer allocator.free(pixels);
@@ -378,8 +375,8 @@ pub fn line_rel(bx: c_int, by: c_int) void {
 
 pub fn curve(x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) void {
     const gui = windows[current];
-    var points = allocator.alloc(c.SDL_Point, 1000) catch @panic("OOM!");
-    defer allocator.free(points);
+    var points_buf: [1000]c.SDL_Point = undefined;
+    var points: []c.SDL_Point = &points_buf;
     const x0: f64 = @floatFromInt(gui.x);
     const y0: f64 = @floatFromInt(gui.y);
 
@@ -480,6 +477,8 @@ pub fn text_right(words: [:0]const u8) void {
 }
 
 pub fn arc(radius: i32, theta_1: f64, theta_2: f64) void {
+    var sfba = std.heap.stackFallback(8 * 1024, std.heap.raw_c_allocator);
+    const allocator = sfba.get();
     std.debug.assert(0 <= theta_1);
     std.debug.assert(theta_1 <= theta_2);
     std.debug.assert(theta_2 <= std.math.tau);
@@ -545,6 +544,8 @@ pub fn arc(radius: i32, theta_1: f64, theta_2: f64) void {
 }
 
 pub fn circle(radius: i32) void {
+    var sfba = std.heap.stackFallback(8 * 1024, std.heap.raw_c_allocator);
+    const allocator = sfba.get();
     const perimeter_estimate: usize = @intFromFloat(2 * std.math.tau * @as(f64, @floatFromInt(radius)) + 8);
     const gui = windows[current];
     var points = std.ArrayList(c.SDL_Point).initCapacity(allocator, perimeter_estimate) catch @panic("OOM!");
@@ -599,6 +600,8 @@ pub fn circle(radius: i32) void {
 }
 
 pub fn circle_fill(radius: i32) void {
+    var sfba = std.heap.stackFallback(8 * 1024, std.heap.raw_c_allocator);
+    const allocator = sfba.get();
     const r = if (radius < 0) -radius else radius;
     const rsquared = radius * radius;
     const gui = windows[current];
@@ -640,12 +643,20 @@ pub fn get_size() Size {
     };
 }
 
+const ScreenSizeEvent = struct {
+    w: i32,
+    h: i32,
+    z: i32,
+    gui: *Gui,
+};
+
 pub fn set_size(width: i32, height: i32, zoom: i32) void {
-    var size = allocator.create(ScreenSize) catch @panic("OOM!");
+    var size = std.heap.raw_c_allocator.create(ScreenSizeEvent) catch @panic("OOM!");
     size.* = .{
         .w = width,
         .h = height,
         .z = zoom,
+        .gui = &windows[current],
     };
     var event: c.SDL_Event = undefined;
     event = std.mem.zeroes(c.SDL_Event);
@@ -655,8 +666,7 @@ pub fn set_size(width: i32, height: i32, zoom: i32) void {
     sdl_call(c.SDL_PushEvent(&event), "screen.set_size");
 }
 
-fn set_size_inner(width: i32, height: i32, zoom: i32) void {
-    const gui = &windows[current];
+fn set_size_inner(width: i32, height: i32, zoom: i32, gui: *Gui) void {
     gui.WIDTH = @intCast(width);
     gui.HEIGHT = @intCast(height);
     gui.ZOOM = @intCast(zoom);
@@ -665,20 +675,38 @@ fn set_size_inner(width: i32, height: i32, zoom: i32) void {
     window_rect(gui);
 }
 
+const FullscreenEvent = struct {
+    fullscreen: bool,
+    gui: *Gui,
+};
+
 pub fn set_fullscreen(is_fullscreen: bool) void {
-    const gui = windows[current];
+    var fullscreen = std.heap.raw_c_allocator.create(FullscreenEvent) catch @panic("OOM!");
+    fullscreen.* = .{
+        .fullscreen = is_fullscreen,
+        .gui = &windows[current],
+    };
+    var event: c.SDL_Event = undefined;
+    event = std.mem.zeroes(c.SDL_Event);
+    event.type = SDL_USER_EVENT;
+    event.user.code = 1;
+    event.user.data1 = fullscreen;
+    sdl_call(c.SDL_PushEvent(&event), "screen.set_fullscreen");
+}
+
+pub fn set_fullscreen_inner(is_fullscreen: bool, gui: *Gui) void {
     if (is_fullscreen) {
         sdl_call(
             c.SDL_SetWindowFullscreen(gui.window, c.SDL_WINDOW_FULLSCREEN_DESKTOP),
             "screen.set_fullscreen()",
         );
-        window_rect(&windows[current]);
+        window_rect(gui);
     } else {
         sdl_call(
             c.SDL_SetWindowFullscreen(gui.window, 0),
             "screen.set_fullscreen()",
         );
-        set_size(gui.WIDTH, gui.HEIGHT, gui.ZOOM);
+        set_size_inner(gui.WIDTH, gui.HEIGHT, gui.ZOOM, gui);
     }
     const event = .{
         .Screen_Resized = .{
@@ -690,10 +718,10 @@ pub fn set_fullscreen(is_fullscreen: bool) void {
     events.post(event);
 }
 
-pub fn init(alloc_pointer: std.mem.Allocator, width: u16, height: u16, resources: []const u8) !void {
+pub fn init(width: u16, height: u16, resources: []const u8) !void {
     quit = false;
-    allocator = alloc_pointer;
-
+    var sfba = std.heap.stackFallback(1024, std.heap.raw_c_allocator);
+    const allocator = sfba.get();
     if (c.SDL_Init(c.SDL_INIT_VIDEO) < 0) {
         logger.err("screen.init(): {s}", .{c.SDL_GetError()});
         return error.Fail;
@@ -718,12 +746,13 @@ pub fn init(alloc_pointer: std.mem.Allocator, width: u16, height: u16, resources
     };
 
     for (0..2) |i| {
+        const z: c_int = if (i == 0) 4 else 3;
         var w = c.SDL_CreateWindow(
             if (i == 0) "seamstress" else "seamstress_params",
             @intCast(i * width * 4),
             @intCast(i * height * 4),
-            width * 4,
-            height * 4,
+            width * z,
+            height * z,
             c.SDL_WINDOW_SHOWN | c.SDL_WINDOW_RESIZABLE,
         );
         var window = w orelse {
@@ -739,10 +768,10 @@ pub fn init(alloc_pointer: std.mem.Allocator, width: u16, height: u16, resources
         windows[i] = .{
             .window = window,
             .render = render,
-            .zoom = 4,
+            .zoom = @intCast(z),
             .WIDTH = width,
             .HEIGHT = height,
-            .ZOOM = 4,
+            .ZOOM = @intCast(z),
         };
         set(i);
         window_rect(&windows[current]);
@@ -754,7 +783,7 @@ pub fn init(alloc_pointer: std.mem.Allocator, width: u16, height: u16, resources
         );
     }
     set(0);
-    textures = std.ArrayList(Texture).init(allocator);
+    textures = std.ArrayList(Texture).init(std.heap.raw_c_allocator);
     SDL_USER_EVENT = c.SDL_RegisterEvents(1);
     if (SDL_USER_EVENT == std.math.maxInt(u32)) {
         return error.Fail;
@@ -791,10 +820,18 @@ pub fn check() void {
     var ev: c.SDL_Event = undefined;
     while (c.SDL_PollEvent(&ev) != 0) {
         if (ev.type == SDL_USER_EVENT) {
-            if (ev.user.code == 0) {
-                const size: *ScreenSize = @ptrCast(@alignCast(ev.user.data1));
-                set_size_inner(size.w, size.h, size.z);
-                allocator.destroy(size);
+            switch (ev.user.code) {
+                0 => {
+                    const size: *ScreenSizeEvent = @ptrCast(@alignCast(ev.user.data1));
+                    set_size_inner(size.w, size.h, size.z, size.gui);
+                    std.heap.raw_c_allocator.destroy(size);
+                },
+                1 => {
+                    const fullscreen: *FullscreenEvent = @ptrCast(@alignCast(ev.user.data1));
+                    set_fullscreen_inner(fullscreen.fullscreen, fullscreen.gui);
+                    std.heap.raw_c_allocator.destroy(fullscreen);
+                },
+                else => {},
             }
             continue;
         }
