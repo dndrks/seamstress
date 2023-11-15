@@ -28,6 +28,12 @@ function screen.refresh()
   _seamstress.screen_refresh()
 end
 
+--- norns alias to redraw the screen; reveal changes.
+-- @function screen.update
+function screen.update()
+  _seamstress.screen_refresh()
+end
+
 --- move the current position.
 -- @tparam integer x target x-coordinate (1-based)
 -- @tparam integer y target y-coordinate (1-based)
@@ -52,6 +58,13 @@ end
 -- @function screen.color
 function screen.color(r, g, b, a)
   _seamstress.screen_color(r, g, b, a or 255)
+end
+
+--- sets greyscale color/brightness.
+-- @tparam integer value (0-15; 0=off, 15=white)
+-- @function screen.level
+function screen.level(value)
+  _seamstress.screen_color(value * 17, value * 17, value * 17, 255)
 end
 
 --- draws a single pixel.
@@ -233,6 +246,13 @@ end
 -- @tparam bool is_fullscreen
 function screen.set_fullscreen(is_fullscreen)
   _seamstress.screen_set_fullscreen(is_fullscreen)
+end
+
+--- sets the position of the current window on the display
+-- @tparam integer x x-position of upper left corner
+-- @tparam integer y y-position of upper left corner
+function screen.set_position(x, y)
+  _seamstress.screen_set_position(x, y)
 end
 
 _seamstress.screen = {

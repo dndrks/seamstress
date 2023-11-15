@@ -81,6 +81,7 @@ pub fn init(prefix: []const u8, config: []const u8, time: std.time.Timer) !void 
     register_seamstress("screen_get_text_size", ziglua.wrap(screen_get_text_size));
     register_seamstress("screen_set_size", ziglua.wrap(screen_set_size));
     register_seamstress("screen_set_fullscreen", ziglua.wrap(screen_set_fullscreen));
+    register_seamstress("screen_set_position", ziglua.wrap(screen_set_position));
 
     register_seamstress("metro_start", ziglua.wrap(metro_start));
     register_seamstress("metro_stop", ziglua.wrap(metro_stop));
@@ -1066,6 +1067,21 @@ fn screen_set_fullscreen(l: *Lua) i32 {
     check_num_args(l, 1);
     const is_fullscreen = l.toBoolean(1);
     screen.set_fullscreen(is_fullscreen);
+    l.setTop(0);
+    return 0;
+}
+
+/// sets the position of the current window.
+// users should use `screen.set_position` instead
+// @see screen.set_position
+// @param x x-position of upper-left corner
+// @param y y-position of upper-left corner
+// @function screen_set_position
+fn screen_set_position(l: *Lua) i32 {
+    check_num_args(l, 2);
+    const x: i32 = @intFromFloat(l.checkNumber(1));
+    const y: i32 = @intFromFloat(l.checkNumber(2));
+    screen.set_position(x, y);
     l.setTop(0);
     return 0;
 }
